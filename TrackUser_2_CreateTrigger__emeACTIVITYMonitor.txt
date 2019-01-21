@@ -1,0 +1,29 @@
+/* TrackUser_2_CreateTrigger__emeACTIVITYMonitor.sql */
+/* (c) Robert.Cavill@emecoequipment.com */
+
+use DYNAMICS
+go
+
+if object_id ('emeACTIVITYMonitor') is not null
+	drop trigger emeACTIVITYMonitor
+go
+
+create trigger emeACTIVITYMonitor
+ON ACTIVITY
+for INSERT
+as
+if (select count(*) from DYNAMICS.dbo.ACTIVITY) + (select count(*) from inserted) >= 120  --> Adjust this value to your GP license limit
+begin
+	exec msdb.dbo.sp_send_dbmail
+		@recipients = 'your.name@your.company.com' --> Enter a valid e-mail here
+		,@body = 'Great Plains User Limit of 120 users now present in system. This is a trigger (emeACTIVITYMonitor) email alert.'
+		,@subject = 'Great Plains User Limit acheived' 
+
+	/* put count in stats table */
+	declare @usercnt int
+	select @usercnt = (select count(*) from DYNAMICS.dbo.ACTIVITY) + (select count(*) from inserted) 
+	insert DYNAMICS.dbo.emeUSERCOUNT values ( 'GP', getdate(), @usercnt )
+
+end
+
+

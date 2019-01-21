@@ -1,0 +1,21 @@
+SQL Scripts for Dashboard on a Dime Session / Webinar
+Part 2. GP Analytics
+
+Instructions to use the scripts.
+
+Due to technical limitations, the SQL scripts had to be renamed with .txt extensions to 
+be uploaded to GPUG. Don't forget to rename them back to .sql or open them in Notepad and 
+copy / paste the code to SSMS.
+
+TEST this out before you put this into a Prduction environment.
+Please run the SQL scripts against your GP system database (usually DYNAMICS)
+Run the scripts in the order of the sequence file numbering
+Make sure your SQL Mail configuration is setup & working properly to send out notification
+Don't forget to tweak the threashold numbers for Script 2 & 3 before running them in SQL
+
+
+Within the Excel workbook, edit the data Connections for the queries to point to your current 
+DYNAMICS instance (by default the SQL server is labled DYNAMICSGP\DYNAMICSGP) 
+
+Feel free to send any questions by e-mail to beat@gp-geek.com
+Enjoy!

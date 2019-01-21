@@ -1,0 +1,28 @@
+INSTRUCTIONS for creating the function and stored procedures
+for the GP Admin Dashboard refex.
+
+1. Rename Build_GP_Admin_Dashboard_Procs.TXT with an SQL extension
+2. Open SQL Server Management Studio (SSMS) and log into your
+    Dynamics GP SQL Server
+3. Open the freshly renamed Build_GP_Admin_Dashboard_Procs.SQL script
+4. Change the [YourSystemDB] on the first line to the name of your
+    GP System database (usually DYNAMICS)
+5. Execute the script
+6. That's all you need to do in SSMS
+
+Now you just need to open the GPDashboard.xlsm in Excel and
+follow the 6 steps to enable the refex to read your GP SQL
+databases. 
+
+(Your Excel security needs to allow macro execution)
+
+If you have more than one GP SQL Server, then simply make a
+copy of the original GPDashboard.xlsm, rename it, open it,
+and go through the 6 steps. You will, of course, need to run
+the SQL script on your other GP SQL Servers.
+
+Any questions? Contact me at serbach@gmail.com.
+
+Sincerely,
+
+Steve Erbach

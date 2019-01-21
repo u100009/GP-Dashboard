@@ -1,0 +1,602 @@
+USE [YourSystemDB] -- <<<<<<< CHANGE TO YOUR SYSTEM DB NAME (Typically DYNAMICS) <<<<<<<
+GO
+
+/****** Object:  UserDefinedFunction [dbo].[udfDatediffToWords]    Script Date: 1/21/2019 1:18:17 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+-- =============================================
+-- Author: Unknown
+-- Create date: 12/1/2003
+-- Description: Convert the DATEDIFF function to return
+--		Days, Hours, and Minutes.
+-- =============================================
+CREATE FUNCTION [dbo].[udfDatediffToWords] 
+( 
+     @d1 DATETIME, 
+     @d2 DATETIME 
+) 
+RETURNS VARCHAR(255) 
+AS 
+BEGIN 
+     DECLARE @minutes INT, @word VARCHAR(255) 
+     SET @minutes = ABS(DATEDIFF(MINUTE, @d1, @d2)) 
+     IF @minutes = 0 
+         SET @word = '0 minutes.' 
+     ELSE 
+		 BEGIN 
+			 SET @word = '' 
+			 IF @minutes >= 1440
+				BEGIN
+					IF @minutes/1440 = 1 SET @word = @word + '1 day, ';
+					ELSE SET @word = @word + RTRIM(@minutes/1440)+' days, ';
+				END
+
+			SET @minutes = @minutes % 1440;
+			IF @minutes >= 60 
+				BEGIN
+					IF @minutes/60 = 1 SET @word = @word + '1 hour, ';
+					ELSE SET @word = @word + RTRIM(@minutes/60)+' hours, ';
+				END
+			SET @minutes = @minutes % 60 
+			IF @minutes = 1 SET @word = @word + '1 minute';
+			ELSE SET @word = @word + RTRIM(@minutes)+' minutes.' 
+		 END 
+     RETURN @word 
+END 
+GO
+
+-- =============================================
+-- Author: Steve Erbach
+-- Create date: 6-Mar-2018
+-- Description:	Query the SY05000 table for GP Activity.
+-- Revised: 14-Jan-2019
+-- Revision: Removed ORDER BY clause.
+-- NOTE: This procedure uses the FORMAT function.
+--		  Will not work in SQL versions before 2012.
+-- NOTE: This procedure also uses the DATE data type
+--		  and the TIME data type.
+--		  Will not work in SQL versions before 2008.
+-- =============================================
+CREATE PROCEDURE [dbo].[usp24hrActivityTracking]
+	 @dynDB char(15)
+AS
+BEGIN
+
+	SET NOCOUNT ON;
+
+	DECLARE @sql varchar(MAX);
+
+	SET @sql = 'SELECT DISTINCT RTRIM(CMPNYNAM) AS Company
+	  , RTRIM(USERID) AS UserID
+	  , INQYTYPE
+	  , CONVERT(date, DATE1) AS DATE1
+	  , FORMAT(CONVERT(time, TIME1), ''hh\:mm'', ''en-us'') AS TIME1
+	  , RTRIM(SECDESC) AS [Description]
+	 FROM ' + RTRIM(@dynDB) + '..SY05000
+	 WHERE DATE1 + TIME1 > DATEADD(hour, -24, GETDATE());'
+	 --ORDER BY
+		-- DATE1 DESC
+	 -- , TIME1 DESC;'
+
+	  EXECUTE (@sql);
+
+END
+GO
+
+-- =============================================
+-- Author:	Steve Erbach
+-- Create date: 7-Feb-2018
+-- Description:	Create a Temp table containing the details
+--		of all of the MDKTOPST and BCHSTTUS field from all 
+--		of the SY00500 tables from all GP Companies where
+--		MKDTOPST != 0 OR BCHSTTUS != 0.
+-- Modified: 17-Jan-2019
+-- Modification: Added USERID column.
+-- =============================================
+CREATE PROCEDURE [dbo].[uspFillTempSY00500Table]
+	@dynDB varchar(15)
+	, @shouldCreate bit		-- 1=Yes, create the #ActiveBatches table; 0=No, #ActiveBatches will be created external to this sproc.
+AS
+BEGIN
+
+	SET NOCOUNT ON;
+
+	IF @shouldCreate = 1
+	BEGIN
+		IF OBJECT_ID('tempdb..#ActiveBatches') IS NOT NULL DROP TABLE #ActiveBatches;
+
+		CREATE TABLE #ActiveBatches (
+			TableName varchar(30)
+			, BatchSource char(15)
+			, TRXSORCE char(13)
+			, [Batch#] char(15)
+			, SERIES varchar(15)
+			, MKDTOPST tinyint
+			, NUMOFTRX int
+			, BACHFREQ varchar(15)
+			, BCHCOMNT char(61)
+			, BCHTOTAL numeric(19, 5)
+			, CREATDDT datetime
+			, BCHSTTUS smallint
+			, BatchStatusDescription varchar(100)
+			, USERID char(15)
+		);
+	END
+
+	DECLARE @sql varchar(MAX);
+	DECLARE @dbID char(5)
+		, @companyID smallint
+		, @companyName char(65);
+
+	SET @sql = 'DECLARE comp_cursor CURSOR
+	FOR
+		SELECT a.INTERID
+			, a.CMPANYID
+			, a.CMPNYNAM
+		FROM ' + @dynDB + '..SY01500 AS a
+		WHERE a.CMPANYID > -1
+			AND a.EnableGLReporting = 1;';
+
+	EXECUTE (@sql);
+
+	OPEN comp_cursor
+	FETCH NEXT FROM comp_cursor
+	INTO @dbID, @companyID, @companyName;
+
+	WHILE @@FETCH_STATUS = 0  
+		BEGIN
+			SET @sql = 'INSERT INTO #ActiveBatches (TableName, BatchSource, TRXSORCE, [Batch#], SERIES, MKDTOPST, NUMOFTRX, BACHFREQ, BCHCOMNT, BCHTOTAL, CREATDDT, BCHSTTUS, BatchStatusDescription, USERID)
+				SELECT ''' + RTRIM(@dbID) + '..SY00500''
+					, BCHSOURC
+					, TRXSORCE
+					, BACHNUMB
+					, CASE SERIES
+						WHEN 1 THEN ''All''
+						WHEN 2 THEN ''Financial''
+						WHEN 3 THEN ''Sales''
+						WHEN 4 THEN ''Purchasing''
+						WHEN 5 THEN ''Inventory''
+						WHEN 6 THEN ''Payroll - USA''
+						WHEN 7 THEN ''Project''
+						ELSE ''--Unknown--''
+					END AS SERIES
+					, MKDTOPST
+					, NUMOFTRX
+					, CASE BACHFREQ
+						WHEN 1 THEN ''Single Use''
+						WHEN 2 THEN ''Weekly''
+						WHEN 3 THEN ''Biweekly''
+						WHEN 4 THEN ''Semi-Monthly''
+						WHEN 5 THEN ''Monthly''
+						WHEN 6 THEN ''Bi-Monthly''
+						WHEN 7 THEN ''Quarterly''
+						WHEN 8 THEN ''Misc.''
+						ELSE ''--Unknown--''
+					END AS BACHFREQ
+					, BCHCOMNT
+					, BCHTOTAL
+					, CREATDDT
+					, BCHSTTUS
+					, CASE BCHSTTUS
+						WHEN 0 THEN ''Available''
+						WHEN 1 THEN ''Batch is currently posting''
+						WHEN 2 THEN ''Batch is currently being deleted''
+						WHEN 3 THEN ''Batch is currently receiving transactions from outside the module''
+						WHEN 4 THEN ''Batch is done posting''
+						WHEN 5 THEN ''Batch is currently being printed''
+						WHEN 6 THEN ''Batch is currently being updated''
+						WHEN 7 THEN ''Batch was interrupted during posting''
+						WHEN 8 THEN ''Batch was interrupted during printing''
+						WHEN 9 THEN ''Batch was interrupted during updating of tables''
+						WHEN 10 THEN ''Recurring batch has application errors and one or more transactions did not post''
+						WHEN 11 THEN ''Single-use batch has application errors and one or more transactions did not post''
+						WHEN 15 THEN ''A posting error occurred while trying to post a batch of computer checks''
+						WHEN 20 THEN ''Batch was interrupted during the processing of computer checks''
+						WHEN 25 THEN ''Batch was interrupted during the printing of the computer check alignment''
+						WHEN 30 THEN ''Batch was interrupted during the printing of computer checks''
+						WHEN 35 THEN ''Batch was interrupted during the printing of a check alignment form before reprinting checks''
+						WHEN 40 THEN ''Batch was interrupted during the voiding of computer checks''
+						WHEN 45 THEN ''Batch was interrupted during the reprinting of computer checks''
+						WHEN 50 THEN ''Batch was interrupted during the processing of the remittance report''
+						WHEN 55 THEN ''Batch was interrupted during the processing of the remittance Alignment report''
+						WHEN 60 THEN ''Batch was interrupted during the printing of the remittance report''
+						WHEN 100 THEN ''Batch is processing computer checks''
+						WHEN 105 THEN ''A check alignment form is being printed before printing checks''
+						WHEN 110 THEN ''Batch is printing computer checks''
+						WHEN 115 THEN ''A check alignment form is being printed before reprinting checks''
+						WHEN 120 THEN ''Batch is voiding computer checks''
+						WHEN 125 THEN ''Batch is reprinting computer checks''
+						WHEN 130 THEN ''Batch is processing the remittance report''
+						WHEN 135 THEN ''A remittance alignment form is being printed''
+						WHEN 140 THEN ''A remittance form is being printed''
+						ELSE ''--Unknown--''
+					END AS BatchStatusDescription
+					, USERID
+				FROM ' + RTRIM(@dbID) + '.dbo.SY00500;';
+
+			EXECUTE (@sql);
+
+			FETCH NEXT FROM comp_cursor
+			INTO @dbID, @companyID, @companyName;
+
+		END
+
+	CLOSE comp_cursor;
+	DEALLOCATE comp_cursor;
+
+	IF @shouldCreate = 1
+	BEGIN
+		SELECT *
+		FROM #ActiveBatches
+		WHERE MKDTOPST != 0
+			OR BCHSTTUS != 0;
+	END
+
+END
+
+GO
+
+-- =============================================
+-- Author:	Steve Erbach
+-- Create date: 12-Feb-2018
+-- Description:	Return list of Locked documents from all
+--		active Companies.
+-- =============================================
+CREATE PROCEDURE [dbo].[uspLocksInUse] 
+	@dynDB varchar(15)
+	, @shouldCreate bit		-- 1=Yes, create the #DexLock table; 0=No, #DexLock created external to this sproc
+AS
+BEGIN
+
+	SET NOCOUNT ON;
+
+	IF @shouldCreate = 1
+	BEGIN
+		IF OBJECT_ID('tempdb..#DexLock') IS NOT NULL DROP TABLE #DexLock;
+
+		CREATE TABLE #DexLock (
+			[UserID] char(15)
+			, [DocNo Locked] varchar(30)
+			, LoginDate datetime
+			, [table_path_name] char(100)
+		);
+	END
+
+	DECLARE @sql varchar(MAX);
+	DECLARE @dbID char(5)
+		, @companyID smallint
+		, @companyName char(65);
+
+	-- CMPANYID -1 is the TWO database
+	SET @sql = 'DECLARE comp_cursor CURSOR
+	FOR
+		SELECT a.INTERID
+			, a.CMPANYID
+			, a.CMPNYNAM
+		FROM ' + @dynDB + '..SY01500 AS a
+		WHERE a.CMPANYID > -1
+			AND a.EnableGLReporting = 1;';		-- 1 = Enabled; 0 = Disabled
+	EXECUTE (@sql);
+
+	OPEN comp_cursor
+	FETCH NEXT FROM comp_cursor
+	INTO @dbID, @companyID, @companyName;
+
+	WHILE @@FETCH_STATUS = 0  
+		BEGIN
+			SET @sql = 'INSERT INTO #DexLock ([UserID], [DocNo Locked], LoginDate, [table_path_name])
+					SELECT ISNULL(act.USERID, ''LoggedOutUser'') AS [UserID]
+						, CASE ISNULL(po.DEX_ROW_ID, 0)
+							WHEN 0 THEN ''''
+							ELSE ISNULL(LEFT(''PO: '' + po.PONUMBER, 45), '''')
+						END AS [DocNo Locked]
+						, ISNULL(act.logindat, ''1900-01-01'') AS [LoginDate]
+						, lck.[table_path_name]
+					FROM [tempdb].[dbo].[DEX_LOCK] AS lck
+					LEFT OUTER JOIN ' + RTRIM(@dynDB) + '..ACTIVITY AS act
+						ON act.sqlsesid = lck.session_id
+					LEFT OUTER JOIN ' + RTRIM(@dbID) + '.dbo.POP10100 AS po
+						ON lck.row_id = po.DEX_ROW_ID
+							AND lck.[table_path_name] = ''' + RTRIM(@dbID) + '.dbo.POP10100''
+				UNION
+					SELECT ISNULL(act.USERID, ''LoggedOutUser'') AS [UserID]
+						, CASE ISNULL(popivc.DEX_ROW_ID, 0)
+							WHEN 0 THEN ''''
+							ELSE ISNULL(LEFT(''POP IVC: '' + popivc.POPRCTNM, 45), '''')
+						END AS [DocNo Locked]
+						, ISNULL(act.logindat, ''1900-01-01'') AS [LoginDate]
+						, lck.[table_path_name]
+					FROM [tempdb].[dbo].[DEX_LOCK] AS lck
+					LEFT OUTER JOIN ' + RTRIM(@dynDB) + '..ACTIVITY AS act
+						ON act.sqlsesid = lck.session_id
+					LEFT OUTER JOIN ' + RTRIM(@dbID) + '.dbo.POP10300 AS popivc
+						ON lck.row_id = popivc.DEX_ROW_ID
+							AND lck.[table_path_name] = ''' + RTRIM(@dbID) + '.dbo.POP10300''
+				UNION
+					SELECT ISNULL(act.USERID, ''LoggedOutUser'') AS [UserID]
+						, CASE ISNULL(sop.DEX_ROW_ID, 0)
+							WHEN 0 THEN ''''
+							ELSE ISNULL(LEFT(''SOP: '' + sop.SOPNUMBE, 45), '''')
+						END AS [DocNo Locked]
+						, ISNULL(act.logindat, ''1900-01-01'') AS [LoginDate]
+						, lck.[table_path_name]
+					FROM [tempdb].[dbo].[DEX_LOCK] AS lck
+					LEFT OUTER JOIN ' + RTRIM(@dynDB) + '..ACTIVITY AS act
+						ON act.sqlsesid = lck.session_id
+					LEFT OUTER JOIN ' + RTRIM(@dbID) + '.dbo.SOP10100 AS sop
+						ON lck.row_id = sop.DEX_ROW_ID
+							AND lck.table_path_name = ''' + RTRIM(@dbID) + '.dbo.SOP10100''
+				UNION
+					SELECT ISNULL(act.USERID, ''LoggedOutUser'') AS [UserID]
+						, CASE ISNULL(spwh.DEX_ROW_ID, 0)
+							WHEN 0 THEN ''''
+							ELSE ISNULL(LEFT(''SOP PMT: '' + spwh.DOCNUMBR, 45), '''')
+						END AS [DocNo Locked]
+						, ISNULL(act.logindat, ''1900-01-01'') AS [LoginDate]
+						, lck.[table_path_name]
+					FROM [tempdb].[dbo].[DEX_LOCK] AS lck
+					LEFT OUTER JOIN ' + RTRIM(@dynDB) + '..ACTIVITY AS act
+						ON act.sqlsesid = lck.session_id
+					LEFT OUTER JOIN ' + RTRIM(@dbID) + '.dbo.SOP10103 AS spwh
+						ON lck.row_id = spwh.DEX_ROW_ID
+							AND lck.table_path_name = ''' + RTRIM(@dbID) + '.dbo.SOP10103''
+				UNION
+					SELECT ISNULL(act.USERID, ''LoggedOutUser'') AS [UserID]
+						, CASE ISNULL(rmkey.DEX_ROW_ID, 0)
+							WHEN 0 THEN ''''
+							ELSE ISNULL(LEFT(''RM: '' + rmkey.DOCNUMBR, 45), '''')
+						END AS [DocNo Locked]
+						, ISNULL(act.logindat, ''1900-01-01'') AS [LoginDate]
+						, lck.[table_path_name]
+					FROM [tempdb].[dbo].[DEX_LOCK] AS lck
+					LEFT OUTER JOIN ' + RTRIM(@dynDB) + '..ACTIVITY AS act
+						ON act.sqlsesid = lck.session_id
+					LEFT OUTER JOIN ' + RTRIM(@dbID) + '.dbo.RM00401 AS rmkey
+						ON lck.row_id = rmkey.DEX_ROW_ID
+							AND lck.[table_path_name] = ''' + RTRIM(@dbID) + '.dbo.RM00401''
+				UNION
+					SELECT ISNULL(act.USERID, ''LoggedOutUser'') AS [UserID]
+						, CASE ISNULL(pm.DEX_ROW_ID, 0)
+							WHEN 0 THEN ''''
+							ELSE ISNULL(LEFT(''PM VCH: '' + pm.VCHNUMWK, 45), '''')
+						END AS [DocNo Locked]
+						, ISNULL(act.logindat, ''1900-01-01'') AS [LoginDate]
+						, lck.[table_path_name]
+					FROM [tempdb].[dbo].[DEX_LOCK] AS lck
+					LEFT OUTER JOIN ' + RTRIM(@dynDB) + '..ACTIVITY AS act
+						ON act.sqlsesid = lck.session_id
+					LEFT OUTER JOIN ' + RTRIM(@dbID) + '.dbo.PM10000 AS pm
+						ON lck.row_id = pm.DEX_ROW_ID
+							AND lck.[table_path_name] = ''' + RTRIM(@dbID) + '.dbo.PM10000'';';
+
+			EXECUTE (@sql);
+
+			FETCH NEXT FROM comp_cursor
+			INTO @dbID, @companyID, @companyName;
+
+		END
+
+	CLOSE comp_cursor;
+	DEALLOCATE comp_cursor;
+
+	DELETE
+	FROM #DexLock
+	WHERE RTRIM([DocNo Locked]) = '';
+
+	IF @shouldCreate = 1
+	BEGIN
+		SELECT *
+		FROM #DexLock;
+		DROP TABLE #DexLock;
+	END
+
+END
+GO
+
+-- =============================================
+-- Author:	Steve Erbach
+-- Create date: 26-Feb-2018
+-- Description:	Fill the Quick Stats table on the GP Admin
+--		Dashboard.
+-- Modified: 17-Jan-2019
+-- Modification: Added USERID field to #ActiveBatches.
+-- =============================================
+CREATE PROCEDURE [dbo].[uspFillTempActiveBatchesTable]
+	@dynDB varchar(15)
+AS
+BEGIN
+
+	SET NOCOUNT ON;
+
+	IF OBJECT_ID('tempdb..#ActiveBatches') IS NOT NULL DROP TABLE #ActiveBatches;
+	CREATE TABLE #ActiveBatches (
+		TableName varchar(30)
+		, BatchSource char(15)
+		, TRXSORCE char(13)
+		, [Batch#] char(15)
+		, SERIES varchar(15)
+		, MKDTOPST tinyint
+		, NUMOFTRX int
+		, BACHFREQ varchar(15)
+		, BCHCOMNT char(61)
+		, BCHTOTAL numeric(19, 5)
+		, CREATDDT datetime
+		, BCHSTTUS smallint
+		, BatchStatusDescription varchar(100)
+		, USERID char(15)
+	);
+
+	IF OBJECT_ID('tempdb..#DexLock') IS NOT NULL DROP TABLE #DexLock;
+	CREATE TABLE #DexLock (
+		[UserID] char(15)
+		, [DocNo Locked] varchar(30)
+		, LoginDate datetime
+		, [table_path_name] char(100)
+	);
+
+	IF OBJECT_ID('tempdb..#StatCount') IS NOT NULL DROP TABLE #StatCount;
+	CREATE TABLE #StatCount (
+		  Stat varchar(25)
+		  , [Count] numeric(5, 1)
+	 );
+
+	EXECUTE dbo.uspFillTempSY00500Table @dynDB, 0;
+	EXECUTE dbo.uspLocksInUse @dynDB, 0;
+
+	DECLARE @sql varchar(MAX);
+
+	INSERT INTO #StatCount (Stat, [Count])
+		SELECT 'Active Batches' AS Stat
+			, ISNULL((SELECT COUNT(*) FROM #ActiveBatches WHERE MKDTOPST != 0 OR BCHSTTUS != 0), 0) * 1.0
+				+ ISNULL((SELECT COUNT(*) FROM #ActiveBatches WHERE (BCHSTTUS BETWEEN 7 AND 99) OR (BCHSTTUS > 140)), 0) * 0.1
+			AS [Count];
+
+	SET @sql = 'INSERT INTO #StatCount (Stat, [Count])
+		SELECT ''Locks in Use/Orphans'' AS Stat
+			, ISNULL((SELECT COUNT(*) FROM #DexLock), 0) * 1.0
+				+ ISNULL(COUNT(*), 0) * 0.1 AS [Count]
+		FROM (
+			SELECT ''tempdb..DEX_LOCK'' AS TableName
+				, L.*
+			FROM tempdb..DEX_LOCK AS L
+				WHERE NOT EXISTS (
+					SELECT A.*
+					FROM ' + RTRIM(@dynDB) + '..ACTIVITY AS A 
+					WHERE L.session_id = A.SQLSESID
+				)
+		) AS c;'
+
+	EXECUTE (@sql);
+
+	SET @sql = 'INSERT INTO #StatCount (Stat, [Count])
+		SELECT ''Open Batches'' AS Stat
+			, ISNULL(
+				(
+					 COUNT(*) * 1.0 
+					 + (
+						  SELECT SUM(
+								(
+									 CASE c.LinkToActivity
+										  WHEN ''OK'' THEN 0
+										  ELSE 1
+									 END
+								)
+						  )
+						) * 0.1
+				), 0.0
+			) AS [Count]
+		FROM (
+		SELECT
+			B.*
+			, CASE ISNULL(
+				(
+					SELECT A.USERID 
+					FROM ' + RTRIM(@dynDB) + '..ACTIVITY AS A 
+					WHERE B.USERID = A.USERID 
+						AND B.CMPNYNAM = A.CMPNYNAM
+				), ''X'')
+				WHEN ''X'' THEN ''No match''
+				ELSE ''OK''
+			END AS LinkToActivity
+			, CASE B.WINTYPE
+				WHEN 1 THEN ''Batch lock on Open Trx''
+				WHEN 2 THEN ''Batch lock on Open batch''
+				WHEN 3 THEN ''Invoice Entry''
+				WHEN 4 THEN ''SOP Sales Trx Entry''
+				WHEN 5 THEN ''IV-Transfer''
+				WHEN 13 THEN ''IV In transit xfer''
+				WHEN 100 THEN ''Trx lock on Open Trx''
+				WHEN -32767 THEN ''GL Entry''
+				ELSE ''Who knows?''
+			END AS [Description]
+		FROM ' + RTRIM(@dynDB) + '..SY00800 AS B
+		) AS c;';
+
+	EXECUTE (@sql);
+
+	SET @sql = 'INSERT INTO #StatCount (Stat, [Count])
+		SELECT ''Processes'' AS Stat
+			, COUNT(msp.spid) AS [Count]
+		FROM [master].sys.sysprocesses AS msp
+		LEFT OUTER JOIN ' + RTRIM(@dynDB) + '..SY01400 AS um
+			ON msp.loginame = um.USERID;';
+
+	EXECUTE (@sql);
+
+	SET @sql = 'INSERT INTO #StatCount (Stat, [Count])
+		SELECT ''Resources in Use'' AS Stat
+			, ISNULL((COUNT(*) * 1.0 + (SELECT SUM((CASE c.LinkToActivity
+						WHEN ''OK'' THEN 0
+						ELSE 1
+					END))) * 0.1), 0.0) AS [Count]
+		FROM (
+			SELECT
+				CASE ISNULL(
+					(
+						SELECT A.USERID 
+						FROM ' + RTRIM(@dynDB) + '..ACTIVITY AS A 
+						INNER JOIN ' + RTRIM(@dynDB) + '..SY01500 AS C 
+							ON C.CMPNYNAM = A.CMPNYNAM 
+						WHERE R.USERID = A.USERID 
+							AND R.CMPANYID = C.CMPANYID
+					), ''X'')
+					WHEN ''X'' THEN ''No match''
+					ELSE ''OK''
+				END AS LinkToActivity
+				, R.*
+			FROM ' + RTRIM(@dynDB) + '..SY00801 AS R
+		) AS c;';
+
+	EXECUTE (@sql);
+
+	SET @sql = 'INSERT INTO #StatCount (Stat, [Count])
+		SELECT ''Sessions/Orphans'' AS Stat
+			, COUNT(*) * 1.0
+				+ SUM(x.[SQL status]) * 0.1 AS [Count]
+		FROM (
+			SELECT CASE
+					WHEN ds.[SQL status] = ''No match'' AND ds.Spid_count > 0 THEN 1
+					WHEN ds.[SQL status] = ''No match'' AND ds.Spid_count = 0 THEN 1
+					ELSE 0
+				END AS [SQL status]
+			FROM (
+				SELECT ISNULL(ses.session_id, 0) AS session_id
+					 , ISNULL(ses.sqlsvr_spid, 0) AS sqlsvr_spid
+					 , CASE
+						WHEN ISNULL(ses.session_id, 0) = 0 THEN ''No DEX_SESSION''
+						WHEN ISNULL(act.USERID, ''---'') = ''---'' THEN ''No ACTIVITY''
+						ELSE ''OK''
+					 END AS LinkToActivity
+					, ISNULL(act.USERID, ''---'') AS USERID
+					, ISNULL(act.CMPNYNAM, ''---'') AS CMPNYNAM
+					, ISNULL(RTRIM(P.[status]), ''No match'') AS [SQL status]
+					, (
+						SELECT COUNT(*)
+						FROM [master].sys.sysprocesses
+						WHERE (loginame = act.USERID)
+					) AS Spid_count
+				FROM ' + RTRIM(@dynDB) + '..ACTIVITY AS act
+				FULL OUTER JOIN tempdb..DEX_SESSION AS ses
+					ON ses.session_id = act.SQLSESID
+				LEFT OUTER JOIN [master].sys.sysprocesses AS P
+					ON ses.sqlsvr_spid = P.spid
+					AND act.USERID = P.loginame
+			) AS ds
+		) AS x;';
+
+	 EXECUTE (@sql);
+
+	 SELECT * FROM #StatCount;
+
+	DROP TABLE #ActiveBatches;
+	DROP TABLE #DexLock;
+	DROP TABLE #StatCount;
+
+END
+GO
+

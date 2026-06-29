@@ -8,4 +8,5 @@ There have been various versions of the GP Admin Dashboard over the years, the l
 # DISCLAIMER!
 The scripts and workbook are provided "as-is" with no warranty of success, as there are too many unknown factors that could break or prevent the dashboard to work (namely on the SQL server security side). If you need assistance, please reach out to the authors through the Linked-In group ( https://www.linkedin.com/groups/12564983/ )
 
-
+# UPDATE (2026-06-29)
+The latest SQL scripts V4 and Excel Dashboard V4 have been uploaded. They contain some fixes made a while ago, but never uploaded. The V4 SQL scripts are meant to be a single-script install of all the required SQL objects to run the GP Admin Dashboard. 
